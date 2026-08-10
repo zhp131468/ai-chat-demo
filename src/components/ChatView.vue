@@ -317,6 +317,7 @@ const sendImageEdit = async (prompt, imageDataUrl) => {
       image: imageDataUrl
     },
     {
+      timeout:120000,
       signal: abortController.signal
     }
   )

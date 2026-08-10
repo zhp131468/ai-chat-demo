@@ -51,7 +51,7 @@ instance.interceptors.response.use(
 )
 
 export const request = (<T = any>(config: AppAxiosRequestConfig): Promise<T> => {
-  return instance.request(config)
+  return instance.request(config) as unknown as Promise<T>
 }) as RequestApi
 
 request.raw = <T = any>(config: AppAxiosRequestConfig): Promise<AxiosResponse<T>> => {
@@ -65,17 +65,17 @@ request.raw = <T = any>(config: AppAxiosRequestConfig): Promise<AxiosResponse<T>
 
 
 request.get = <T = any>(url: string, config?: AppAxiosRequestConfig): Promise<T> => {
-  return instance.get(url, config)
+  return instance.get(url, config) as unknown as Promise<T>
 }
 
 request.post = <T = any>(url: string, data?: any, config?: AppAxiosRequestConfig): Promise<T> => {
-  return instance.post(url, data, config)
+  return instance.post(url, data, config) as unknown as Promise<T>
 }
 
 request.put = <T = any>(url: string, data?: any, config?: AppAxiosRequestConfig): Promise<T> => {
-  return instance.put(url, data, config)
+  return instance.put(url, data, config) as unknown as Promise<T>
 }
 
 request.delete = <T = any>(url: string, config?: AppAxiosRequestConfig): Promise<T> => {
-  return instance.delete(url, config)
+  return instance.delete(url, config) as unknown as Promise<T>
 }

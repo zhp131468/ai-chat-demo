@@ -44,11 +44,11 @@
                 preview-teleported
               />
             </div>
+            <div v-if="imageStatus" class="image-status">{{ imageStatus }}</div>
             <div v-if="item.content" class="markdown-body" v-html="renderMarkdown(item.content)"></div>
           </div>
         </div>
       </div>
-
     </div>
 
     <div class="chat-input">
@@ -131,6 +131,9 @@ const streaming = ref(false)
 const chatList = ref([])
 const selectedImage = ref(null)
 const editImageUrl = ref('')
+const imageStatus = ref('')
+const imageElapsed = ref(0)
+let imageTimer = null
 const previewVisible = ref(false)
 const previewUrl = ref('')
 let abortController = null
@@ -302,9 +305,33 @@ const sendTextChat = async (prompt) => {
   })
 }
 
+
+const startImageTimer = () => {
+  imageElapsed.value = 0
+  imageTimer = setInterval(() => {
+    imageElapsed.value++
+  }, 1000)
+}
+
+const stopImageTimer = () => {
+  if (imageTimer) {
+    clearInterval(imageTimer)
+    imageTimer = null
+  }
+}
+
 const sendImageEdit = async (prompt, imageDataUrl) => {
-  const aiMsgItem = { role: 'assistant', content: '正在生成图片...', images: [] }
+  const aiMsgItem = { role: 'assistant', content: '', images: [], loading: true }
   chatList.value.push(aiMsgItem)
+
+  imageStatus.value = '📤 图片上传完成'
+  startImageTimer()
+
+  setTimeout(() => {
+    if (imageStatus.value) {
+      imageStatus.value = '🎨 AI正在生成图片...'
+    }
+  }, 800)
 
   abortController = new AbortController()
   loading.value = true
@@ -325,6 +352,9 @@ const sendImageEdit = async (prompt, imageDataUrl) => {
   aiMsgItem.content = response?.text || '图片已生成'
   aiMsgItem.images = Array.isArray(response?.images) ? response.images : []
   aiMsgItem.loading = false
+  imageStatus.value = `✅ 图片生成完成，耗时 ${imageElapsed.value} 秒`
+  stopImageTimer()
+
   setEditImage(aiMsgItem.images[0] || imageDataUrl)
 
   loading.value = false
@@ -384,6 +414,7 @@ const clearChat = () => {
 
 onBeforeUnmount(() => {
   stopStream()
+  stopImageTimer()
 })
 </script>
 
@@ -701,5 +732,18 @@ onBeforeUnmount(() => {
   max-width: 100%;
   max-height: 80vh;
   object-fit: contain;
+}
+</style>
+
+<style scoped>
+.image-status {
+  margin: 10px 16px;
+  padding: 12px 16px;
+  border-radius: 8px;
+  background: #f0f9ff;
+  color: #409eff;
+  font-size: 14px;
+  display: flex;
+  justify-content: space-between;
 }
 </style>

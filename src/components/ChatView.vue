@@ -8,7 +8,7 @@
       </div>
     </div>
 
-    <div class="chat-content" ref="scrollRef">
+    <div class="chat-content" ref="scrollRef" @scroll="handleScroll">
       <div v-for="(item, index) in chatList" :key="index" class="chat-item">
         <div v-if="item.role === 'user'" class="user-msg msg-box">
           <div class="msg-label">我</div>
@@ -44,7 +44,7 @@
                 preview-teleported
               />
             </div>
-            <div v-if="imageStatus" class="image-status">{{ imageStatus }}</div>
+            <div v-if="item.status" class="image-status">{{ item.status }}</div>
             <div v-if="item.content" class="markdown-body" v-html="renderMarkdown(item.content)"></div>
           </div>
         </div>
@@ -131,12 +131,12 @@ const streaming = ref(false)
 const chatList = ref([])
 const selectedImage = ref(null)
 const editImageUrl = ref('')
-const imageStatus = ref('')
 const imageElapsed = ref(0)
 let imageTimer = null
 const previewVisible = ref(false)
 const previewUrl = ref('')
 let abortController = null
+let shouldAutoScroll = true  // 标记是否应该自动滚动
 
 const visualContextUrl = computed(() => selectedImage.value?.dataUrl || editImageUrl.value || '')
 const visualContextLabel = computed(() => {
@@ -148,10 +148,22 @@ const visualContextLabel = computed(() => {
 const renderMarkdown = (str) => md.render(str || '')
 
 const scrollToBottom = async () => {
+  if (!shouldAutoScroll) return  // 只有当标记为 true 时才自动滚动
+  
   await nextTick()
   if (scrollRef.value) {
     scrollRef.value.scrollTop = scrollRef.value.scrollHeight
   }
+}
+
+const handleScroll = () => {
+  if (!scrollRef.value) return
+  
+  // 检查是否已经滚动到底部（留 50px 的容差）
+  const { scrollHeight, scrollTop, clientHeight } = scrollRef.value
+  const isAtBottom = scrollHeight - scrollTop - clientHeight < 50
+  
+  shouldAutoScroll = isAtBottom
 }
 
 const openPreview = (src) => {
@@ -254,12 +266,26 @@ const parseSseChunk = (chunk, sseBuffer, onData) => {
 }
 
 const sendTextChat = async (prompt) => {
-  const aiMsgItem = { role: 'assistant', content: '', images: [], loading: true }
+  const aiMsgItem = { role: 'assistant', content: '', images: [], loading: true, status: '' }
+  const msgIndex = chatList.value.length
   chatList.value.push(aiMsgItem)
 
   let receivedText = ''
   let sseBuffer = ''
   let receivedFirstChunk = false
+  
+  // 打字机效果：字符队列
+  let charQueue = []
+  
+  const displayNextChar = () => {
+    if (charQueue.length === 0) return
+    
+    const char = charQueue.shift()
+    chatList.value[msgIndex].content += char
+    
+    // 递归调度，让浏览器在字符之间处理其他事件（如滚动）
+    setTimeout(displayNextChar, 20)
+  }
 
   const appendSseText = (textChunk) => {
     sseBuffer = parseSseChunk(textChunk, sseBuffer, (payload) => {
@@ -269,9 +295,13 @@ const sendTextChat = async (prompt) => {
       }
       if (!receivedFirstChunk) {
         receivedFirstChunk = true
-        aiMsgItem.loading = false
+        chatList.value[msgIndex].loading = false
       }
-      aiMsgItem.content += payload
+      // 把每个字符加入队列，而不是直接追加
+      for (const char of payload) {
+        charQueue.push(char)
+      }
+      displayNextChar()  // 触发逐字显示
     })
   }
 
@@ -296,12 +326,16 @@ const sendTextChat = async (prompt) => {
     }
   })
 
+  // 处理剩余缓冲数据
   parseSseChunk('', sseBuffer, (payload) => {
     if (payload === '[DONE]') {
       stopStream()
       return
     }
-    aiMsgItem.content += payload
+    for (const char of payload) {
+      charQueue.push(char)
+    }
+    displayNextChar()
   })
 }
 
@@ -321,44 +355,62 @@ const stopImageTimer = () => {
 }
 
 const sendImageEdit = async (prompt, imageDataUrl) => {
-  const aiMsgItem = { role: 'assistant', content: '', images: [], loading: true }
+  const aiMsgItem = { 
+    role: 'assistant', 
+    content: '', 
+    images: [], 
+    loading: true, 
+    status: '📤 图片上传完成'
+  }
   chatList.value.push(aiMsgItem)
-
-  imageStatus.value = '📤 图片上传完成'
+  const msgIndex = chatList.value.length - 1
   startImageTimer()
-
-  setTimeout(() => {
-    if (imageStatus.value) {
-      imageStatus.value = '🎨 AI正在生成图片...'
-    }
-  }, 800)
+  console.log('[状态1] 设置为上传完成', aiMsgItem.status)
 
   abortController = new AbortController()
   loading.value = true
   streaming.value = false
 
-  const response = await request.post(
+  // 立刻发起请求，不等待
+  const responsePromise = request.post(
     '/image-edit',
     {
       prompt,
       image: imageDataUrl
     },
     {
-      timeout:120000,
+      timeout: 120000,
       signal: abortController.signal
     }
   )
 
-  aiMsgItem.content = response?.text || '图片已生成'
-  aiMsgItem.images = Array.isArray(response?.images) ? response.images : []
-  aiMsgItem.loading = false
-  imageStatus.value = `✅ 图片生成完成，耗时 ${imageElapsed.value} 秒`
-  stopImageTimer()
+  // 在后台等 150ms 后再改状态
+  setTimeout(() => {
+    console.log('[状态2] 准备设置为生成中，当前值：', chatList.value[msgIndex].status)
+    // 强制更新，通过赋值给chatList来触发Vue响应式
+    chatList.value[msgIndex].status = '🎨 AI正在生成图片...'
+    console.log('[状态2] 已设置为生成中，新值：', chatList.value[msgIndex].status)
+  }, 150)
 
-  setEditImage(aiMsgItem.images[0] || imageDataUrl)
-
-  loading.value = false
-  abortController = null
+  try {
+    const response = await responsePromise
+    console.log('[状态3] 设置为完成')
+    chatList.value[msgIndex].content = response?.text || '图片已生成'
+    chatList.value[msgIndex].images = Array.isArray(response?.images) ? response.images : []
+    chatList.value[msgIndex].status = `✅ 图片生成完成，耗时 ${imageElapsed.value} 秒`
+    setEditImage(chatList.value[msgIndex].images[0] || imageDataUrl)
+  } catch (err) {
+    if (err.name !== 'AbortError') {
+      console.log('[错误] 生成失败', err.message)
+      chatList.value[msgIndex].status = '❌ 生成失败，请重试'
+      chatList.value[msgIndex].content = err.message || '生成过程中出错'
+    }
+  } finally {
+    chatList.value[msgIndex].loading = false
+    stopImageTimer()
+    loading.value = false
+    abortController = null
+  }
 }
 
 const handleSend = async () => {
@@ -367,6 +419,8 @@ const handleSend = async () => {
 
   if (!text && !imageDataUrl) return
   if (loading.value || streaming.value) return
+
+  shouldAutoScroll = true  // 重置自动滚动标记
 
   const displayText = text || '请帮我处理这张图片。'
 
@@ -401,6 +455,11 @@ const handleSend = async () => {
     abortController = null
     streaming.value = false
     loading.value = false
+    // 内容完全接收后，强制滚动到底部
+    await nextTick()
+    if (scrollRef.value) {
+      scrollRef.value.scrollTop = scrollRef.value.scrollHeight
+    }
   }
 }
 
